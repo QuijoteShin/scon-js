@@ -1,0 +1,45 @@
+{
+  "name": "scon-notation",
+  "version": "1.0.0",
+  "description": "SCON — Schema-Compact Object Notation: human-readable serialization with structural dedup and optional WASM acceleration",
+  "type": "module",
+  "main": "src/scon.js",
+  "exports": {
+    ".": "./src/scon.js",
+    "./encoder": "./src/encoder.js",
+    "./decoder": "./src/decoder.js",
+    "./minifier": "./src/minifier.js",
+    "./validator": "./src/validator.js",
+    "./schema-registry": "./src/schema-registry.js",
+    "./tree-hash": "./src/tree-hash.js"
+  },
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "scon-wasm": "1.0.0",
+    "hash-wasm": "^4.11.0"
+  },
+  "keywords": [
+    "serialization",
+    "json-alternative",
+    "schema",
+    "dedup",
+    "parser",
+    "scon",
+    "compact",
+    "wasm"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QuijoteShin/scon-js"
+  },
+  "homepage": "https://github.com/QuijoteShin/scon-js",
+  "author": "QuijoteShin",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
