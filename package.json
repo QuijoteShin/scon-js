@@ -1,6 +1,6 @@
 {
   "name": "scon-notation",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SCON — Schema-Compact Object Notation: 59-66% smaller than JSON with structural dedup, optional WASM acceleration",
   "type": "module",
   "main": "src/scon.js",
