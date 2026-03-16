@@ -1,7 +1,7 @@
 {
   "name": "scon-notation",
   "version": "1.0.0",
-  "description": "SCON — Schema-Compact Object Notation: human-readable serialization with structural dedup and optional WASM acceleration",
+  "description": "SCON — Schema-Compact Object Notation: 59-66% smaller than JSON with structural dedup, optional WASM acceleration",
   "type": "module",
   "main": "src/scon.js",
   "exports": {
