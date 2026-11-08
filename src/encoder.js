@@ -312,6 +312,8 @@ export class Encoder {
             const hdr = this._formatHeader(firstVal.length, null);
             const vals = this._joinPrimitives(firstVal);
             yield this._listItem(depth, `${encodedKey}${hdr} ${vals}`);
+        } else if (Array.isArray(firstVal)) {
+            yield* this._encodeArrayAsListItemValue(encodedKey, firstVal, depth);
         } else if (typeof firstVal === 'object' && firstVal !== null) {
             yield this._listItem(depth, `${encodedKey}:`);
             yield* this._encodeObject(firstVal, depth + 2);
@@ -319,6 +321,41 @@ export class Encoder {
 
         if (Object.keys(rest).length > 0) {
             yield* this._encodeObject(rest, depth + 1);
+        }
+    }
+
+    *_encodeArrayAsListItemValue(encodedKey, array, depth) {
+        const fields = this._isArrayOfObjects(array) ? this._extractTabularHeader(array) : null;
+        const header = this._formatHeader(array.length, null, fields);
+        yield this._listItem(depth, `${encodedKey}${header}`);
+
+        if (fields !== null) {
+            for (const row of array) {
+                const values = fields.map(f => row[f] ?? null);
+                yield this._indented(depth + 1, this._joinPrimitives(values));
+            }
+            return;
+        }
+
+        for (const item of array) {
+            if (this._isPrimitive(item)) {
+                yield this._listItem(depth + 1, this._encodePrimitive(item));
+            } else if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+                const schemaRef = this._findMatchingSchema(item);
+                if (schemaRef !== null) {
+                    yield this._listItem(depth + 1, `@s:${schemaRef}`);
+                } else {
+                    yield* this._encodeObjectAsListItem(item, depth + 1);
+                }
+            } else if (Array.isArray(item)) {
+                if (item.length === 0) {
+                    yield this._listItem(depth + 1, '[]');
+                } else if (this._isArrayOfPrimitives(item)) {
+                    const subHeader = this._formatHeader(item.length, null);
+                    const values = this._joinPrimitives(item);
+                    yield this._listItem(depth + 1, `${subHeader} ${values}`);
+                }
+            }
         }
     }
 
