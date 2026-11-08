@@ -101,7 +101,11 @@ export class Minifier {
                     lines.push(' '.repeat(indent * depth) + trimmed);
 
                     // Scope openers: increase depth for children
-                    if (/:$/.test(trimmed) && !/:\s*\S/.test(trimmed)) {
+                    // Blank out quoted keys/fields first: a ":" inside quotes is not a value separator
+                    const unquoted = trimmed.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+                    // "- k[N]{f}:" opens its rows at the same level as the item's other fields, so it counts once
+                    const listArrayHeader = /^- /.test(unquoted) && /\[\d+[\t|]?\](\{[^}]*\})?:$/.test(unquoted);
+                    if (/:$/.test(unquoted) && !/:\s*\S/.test(unquoted) && !listArrayHeader) {
                         depth++;
                     }
                     // List item children are indented 1 level deeper
