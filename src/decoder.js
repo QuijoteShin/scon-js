@@ -345,9 +345,9 @@ export class Decoder {
         return [key, [], index + 1];
     }
 
-    _decodeArrayFromHeader(index, parsedLines) {
+    _decodeArrayFromHeader(index, parsedLines, content = null) {
         const line = parsedLines[index];
-        const header = this._parseArrayHeader(line.content);
+        const header = this._parseArrayHeader(content ?? line.content);
         const baseDepth = line.depth;
 
         if (header.length === 0) return [];
@@ -399,19 +399,20 @@ export class Decoder {
                     continue;
                 }
 
-                if (this._isKeyValueLine(itemContent)) {
+                // Anonymous inner array ("- [2]: 3, 4"); it contains ":" so it must be checked before key-value
+                if (this._isArrayHeader(itemContent) && this._parseArrayHeader(itemContent).key === null) {
+                    const itemHeader = this._parseArrayHeader(itemContent);
+                    if (itemHeader.inlineValues !== null) {
+                        result.push(this._parseDelimitedValues(itemHeader.inlineValues, itemHeader.delimiter));
+                    } else if (itemHeader.length === 0) {
+                        result.push([]);
+                    }
+                } else if (this._isKeyValueLine(itemContent)) {
                     const obj = this._decodeListItemObject(line, parsedLines, i, baseDepth);
                     result.push(obj);
                     i++;
                     while (i < parsedLines.length && parsedLines[i].depth > baseDepth + 1) i++;
                     continue;
-                }
-
-                if (this._isArrayHeader(itemContent)) {
-                    const itemHeader = this._parseArrayHeader(itemContent);
-                    if (itemHeader.inlineValues !== null) {
-                        result.push(this._parseDelimitedValues(itemHeader.inlineValues, itemHeader.delimiter));
-                    }
                 } else {
                     result.push(this._parsePrimitive(itemContent));
                 }
@@ -424,25 +425,51 @@ export class Decoder {
 
     _decodeListItemObject(line, parsedLines, index, baseDepth) {
         const itemContent = line.content.slice(LIST_PREFIX.length);
+        const result = {};
+        const contDepth = baseDepth + 2;
+        let i = index + 1;
+
+        if (this._isArrayHeader(itemContent) && this._parseArrayHeader(itemContent).key !== null) {
+            // First key of the item is an array ("- k[2]: 1, 2" or "- k[2]{a}:" with rows at contDepth)
+            const header = this._parseArrayHeader(itemContent);
+            result[header.key] = this._decodeArrayFromHeader(index, parsedLines, itemContent);
+            if (header.inlineValues === null && header.length > 0) {
+                // Skip the array body: N rows (tabular) or N "- " items with their children (expanded)
+                let taken = 0;
+                while (i < parsedLines.length && taken < header.length && parsedLines[i].depth >= contDepth) {
+                    if (header.fields !== null || parsedLines[i].content.startsWith(LIST_PREFIX)) {
+                        if (parsedLines[i].depth === contDepth) taken++;
+                    }
+                    i++;
+                    if (header.fields === null && taken === header.length) {
+                        while (i < parsedLines.length && parsedLines[i].depth > contDepth) i++;
+                    }
+                }
+            }
+            return this._decodeListItemContinuation(result, contDepth, i, parsedLines);
+        }
+
         const keyData = this._parseKey(itemContent);
         const key = keyData.key;
         const rest = itemContent.slice(keyData.end).trim();
-
-        const result = {};
-        const contDepth = baseDepth + 2;
 
         if (rest !== '' && rest.startsWith('@')) {
             result[key] = this._resolveReference(rest);
         } else if (rest !== '') {
             result[key] = this._parsePrimitive(rest);
         } else if (index + 1 < parsedLines.length && parsedLines[index + 1].depth >= contDepth) {
-            result[key] = this._decodeObject(contDepth, parsedLines, index + 1);
+            // The encoder writes the first key's nested object one level below the continuation fields
+            const nestedDepth = parsedLines[index + 1].depth > contDepth ? contDepth + 1 : contDepth;
+            result[key] = this._decodeObject(nestedDepth, parsedLines, index + 1);
         } else {
             result[key] = [];
         }
 
+        return this._decodeListItemContinuation(result, contDepth, index + 1, parsedLines);
+    }
+
+    _decodeListItemContinuation(result, contDepth, i, parsedLines) {
         // Parse continuation fields
-        let i = index + 1;
         while (i < parsedLines.length) {
             const nextLine = parsedLines[i];
             if (nextLine.depth < contDepth) break;
@@ -476,15 +503,19 @@ export class Decoder {
 
     _parseArrayHeader(content) {
         let key = null;
-        const bracketStart = content.indexOf(OBRACK);
+        // A quoted key may itself contain "[", "]", ":" or "{": skip it before locating delimiters
+        const keyEnd = this._skipQuotedKey(content);
+        const bracketStart = content.indexOf(OBRACK, keyEnd);
 
-        if (bracketStart > 0) {
+        if (keyEnd > 0) {
+            key = this._parseStringLiteral(content.slice(0, keyEnd));
+        } else if (bracketStart > 0) {
             const rawKey = content.slice(0, bracketStart).trim();
             key = this._parseStringLiteral(rawKey);
         }
 
         const bracketEnd = content.indexOf(CBRACK, bracketStart);
-        if (bracketEnd === -1) throw new Error('Invalid array header: missing ]');
+        if (bracketStart === -1 || bracketEnd === -1) throw new Error('Invalid array header: missing ]');
 
         let bracketContent = content.slice(bracketStart + 1, bracketEnd);
 
@@ -503,7 +534,8 @@ export class Decoder {
         let colonIndex = content.indexOf(COLON, bracketEnd);
 
         if (braceStart !== -1 && (colonIndex === -1 || braceStart < colonIndex)) {
-            const braceEnd = content.indexOf(CBRACE, braceStart);
+            // Field names may be quoted and contain "}" or ":"
+            const braceEnd = this._findClosingBrace(content, braceStart);
             if (braceEnd !== -1) {
                 const fieldsContent = content.slice(braceStart + 1, braceEnd);
                 fields = this._parseDelimitedValues(fieldsContent, delimiter);
@@ -520,6 +552,24 @@ export class Decoder {
         }
 
         return { key, length, delimiter, fields, inlineValues };
+    }
+
+    // Index just past a leading quoted key (0 if the content does not start with a quote)
+    _skipQuotedKey(content) {
+        if (content[0] !== DQUOTE) return 0;
+        const closing = this._findClosingQuote(content, 0);
+        return closing === -1 ? 0 : closing + 1;
+    }
+
+    _findClosingBrace(str, start) {
+        let inQuotes = false;
+        for (let i = start + 1; i < str.length; i++) {
+            const char = str[i];
+            if (char === BACKSLASH && inQuotes && i + 1 < str.length) { i++; continue; }
+            if (char === DQUOTE) { inQuotes = !inQuotes; continue; }
+            if (!inQuotes && char === CBRACE) return i;
+        }
+        return -1;
     }
 
     _parseDelimitedValues(input, delimiter) {
@@ -735,12 +785,18 @@ export class Decoder {
     }
 
     _isArrayHeader(content) {
-        const bracketPos = content.indexOf(OBRACK);
-        const colonPos = content.indexOf(COLON);
+        const keyEnd = this._skipQuotedKey(content);
+        const bracketPos = content.indexOf(OBRACK, keyEnd);
+        const colonPos = content.indexOf(COLON, keyEnd);
         return bracketPos !== -1 && colonPos !== -1 && bracketPos < colonPos;
     }
 
     _isKeyValueLine(content) {
+        // A quoted string with ":" inside ("x:y") is a primitive, not a key; "key"[N] is an array header
+        if (content[0] === DQUOTE) {
+            const closing = this._findClosingQuote(content, 0);
+            return closing !== -1 && (content[closing + 1] === COLON || content[closing + 1] === OBRACK);
+        }
         return content.includes(COLON);
     }
 
